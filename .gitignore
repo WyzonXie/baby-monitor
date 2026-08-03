@@ -1,0 +1,4 @@
+# 不进仓库的东西
+.venv/
+__pycache__/
+config.py
