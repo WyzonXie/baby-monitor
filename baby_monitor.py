@@ -1,7 +1,9 @@
+from datetime import datetime
 from mediapipe.tasks import python as mp_python
 from mediapipe.tasks.python import audio as mp_audio
 from mediapipe.tasks.python.components import containers as mp_containers
 import sounddevice as sd
+
 
 SAMPLE_RATE = 16000
 SECONDS = 1
@@ -20,6 +22,8 @@ options = mp_audio.AudioClassifierOptions(
 classifier = mp_audio.AudioClassifier.create_from_options(options)
 print("Model loaded.")
 print("Monitoring...")
+
+log_file=open("cry_log.csv", "a", encoding="utf-8")
 
 try:
     while True:
@@ -48,5 +52,10 @@ try:
             if silence_count >= SILENCE_RESET_THRESHOLD:
                 cry_count = 0
                 alerted = False
+
+        log_file.write(f"{datetime.now()},{volume},{is_crying}\n")
+        log_file.flush()
+
 except KeyboardInterrupt:
     print("Monitoring stopped.")
+    log_file.close()
