@@ -8,6 +8,8 @@ SECONDS = 1
 THRESHOLD = 0.2  # silent ~0.03 speaking ~0.3
 cry_count = 0
 silence_count = 0
+alerted = False
+
 CRY_COUNT_THRESHOLD = 5  # number of consecutive cries to trigger alert
 SILENCE_RESET_THRESHOLD = 10  # number of consecutive silences to reset cry count
 
@@ -38,11 +40,13 @@ try:
         if is_crying:
             cry_count += 1
             silence_count = 0
-            if cry_count >= CRY_COUNT_THRESHOLD:
+            if cry_count >= CRY_COUNT_THRESHOLD and not alerted:
                 print("Baby is crying!")
+                alerted = True
         else:
             silence_count += 1
             if silence_count >= SILENCE_RESET_THRESHOLD:
                 cry_count = 0
+                alerted = False
 except KeyboardInterrupt:
     print("Monitoring stopped.")
