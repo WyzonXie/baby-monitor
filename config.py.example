@@ -1,0 +1,2 @@
+# 复制本文件为 config.py，填入自己的真实值
+  WEBHOOK_URL = "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=你的key"
