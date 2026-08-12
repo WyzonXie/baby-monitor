@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from mediapipe.tasks import python as mp_python
 from mediapipe.tasks.python import audio as mp_audio
 from mediapipe.tasks.python.components import containers as mp_containers
@@ -12,7 +12,9 @@ THRESHOLD = 0.2  # silent ~0.03 speaking ~0.3
 cry_count = 0
 silence_count = 0
 alerted = False
+last_heartbeat_time = datetime.min
 
+HEARTBEAT_INTERVAL = timedelta(hours=1)  # send heartbeat every hour
 CRY_COUNT_THRESHOLD = 5  # number of consecutive cries to trigger alert
 SILENCE_RESET_THRESHOLD = 10  # number of consecutive silences to reset cry count
 
@@ -63,6 +65,10 @@ try:
             if silence_count >= SILENCE_RESET_THRESHOLD:
                 cry_count = 0
                 alerted = False
+
+        if datetime.now() - last_heartbeat_time > HEARTBEAT_INTERVAL:
+            last_heartbeat_time = datetime.now()
+            send_notification(f'datetime: {datetime.now()}, Heartbeat: Baby monitor is running. 宝宝监护运行中。')
 
         log_file.write(f'{datetime.now()},{volume},{is_crying},{cry_score},"{top_category}",{top_score}\n')
         log_file.flush()
