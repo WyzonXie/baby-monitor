@@ -3,20 +3,23 @@ from mediapipe.tasks import python as mp_python
 from mediapipe.tasks.python import audio as mp_audio
 from mediapipe.tasks.python.components import containers as mp_containers
 from notifier import send_notification
-import sounddevice as sd
-
+from config import RTSP_URL
+import numpy as np
+import subprocess
 
 SAMPLE_RATE = 16000
 SECONDS = 1
-THRESHOLD = 0.2  # silent ~0.03 speaking ~0.3
+THRESHOLD = 0.1
+HEARTBEAT_INTERVAL = timedelta(hours=1)  # send heartbeat every hour
+CRY_COUNT_THRESHOLD = 5  # number of consecutive cries to trigger alert
+SILENCE_RESET_THRESHOLD = 10  # number of consecutive silences to reset cry count
+BYTES_PER_SAMPLE = 2  # 16-bit audio
+CHUNK_BYTES = SAMPLE_RATE * SECONDS * BYTES_PER_SAMPLE  # number of bytes to read per chunk
+
 cry_count = 0
 silence_count = 0
 alerted = False
 last_heartbeat_time = datetime.min
-
-HEARTBEAT_INTERVAL = timedelta(hours=1)  # send heartbeat every hour
-CRY_COUNT_THRESHOLD = 5  # number of consecutive cries to trigger alert
-SILENCE_RESET_THRESHOLD = 10  # number of consecutive silences to reset cry count
 
 options = mp_audio.AudioClassifierOptions(
       base_options=mp_python.BaseOptions(model_asset_path="yamnet.tflite"),
@@ -27,6 +30,7 @@ print("Model loaded.")
 print("Monitoring...")
 
 log_file=open("cry_log.csv", "a", encoding="utf-8")
+p = subprocess.Popen(["ffmpeg", "-rtsp_transport", "tcp","-loglevel", "error", "-i", RTSP_URL, "-vn", "-ac","1", "-ar",str(SAMPLE_RATE), "-f","s16le","-"], stdout=subprocess.PIPE)
 
 try:
     while True:
@@ -34,8 +38,10 @@ try:
         cry_score = 0
         top_category = ""
         top_score = 0
-        audio_data = sd.rec(SAMPLE_RATE * SECONDS, samplerate=SAMPLE_RATE, channels=1)
-        sd.wait()
+        data = p.stdout.read(CHUNK_BYTES)
+        samples = np.frombuffer(data, dtype=np.int16)
+        audio_data = samples.astype(np.float32) / 32768.0
+        audio_data = audio_data.reshape(-1, 1)
         volume = abs(audio_data).max()
         print(volume)
         # Check if the volume exceeds the threshold
@@ -66,6 +72,7 @@ try:
                 cry_count = 0
                 alerted = False
 
+        # Send heartbeat notification if the interval has passed
         if datetime.now() - last_heartbeat_time > HEARTBEAT_INTERVAL:
             last_heartbeat_time = datetime.now()
             send_notification(f'datetime: {datetime.now()}, Heartbeat: Baby monitor is running. 宝宝监护运行中。')
@@ -75,4 +82,7 @@ try:
 
 except KeyboardInterrupt:
     print("Monitoring stopped.")
+
+finally:
     log_file.close()
+    p.terminate()
