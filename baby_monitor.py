@@ -6,6 +6,7 @@ from notifier import send_notification
 from config import RTSP_URL
 import numpy as np
 import subprocess
+import time
 
 SAMPLE_RATE = 16000
 SECONDS = 1
@@ -20,6 +21,11 @@ cry_count = 0
 silence_count = 0
 alerted = False
 last_heartbeat_time = datetime.min
+stream_alerted = False
+
+def start_ffmpeg():
+    p = subprocess.Popen(["ffmpeg", "-rtsp_transport","tcp","-timeout","5000000","-loglevel", "error", "-i", RTSP_URL, "-vn", "-ac","1", "-ar",str(SAMPLE_RATE), "-f","s16le","-"], stdout=subprocess.PIPE)
+    return p
 
 options = mp_audio.AudioClassifierOptions(
       base_options=mp_python.BaseOptions(model_asset_path="yamnet.tflite"),
@@ -30,8 +36,7 @@ print("Model loaded.")
 print("Monitoring...")
 
 log_file=open("cry_log.csv", "a", encoding="utf-8")
-p = subprocess.Popen(["ffmpeg", "-rtsp_transport", "tcp","-loglevel", "error", "-i", RTSP_URL, "-vn", "-ac","1", "-ar",str(SAMPLE_RATE), "-f","s16le","-"], stdout=subprocess.PIPE)
-
+p = start_ffmpeg()
 try:
     while True:
         is_crying = False
@@ -39,6 +44,22 @@ try:
         top_category = ""
         top_score = 0
         data = p.stdout.read(CHUNK_BYTES)
+        # stream error
+        if len(data) < CHUNK_BYTES:
+            print("Error: Could not read data.")
+            if not stream_alerted:
+                result=send_notification(f'datetime: {datetime.now()}, Error: Baby monitor interrupted.Reconnecting... 宝宝监护中断，重连中...')
+                if result:
+                    stream_alerted = True
+            print("reconnecting...")    
+            p.terminate()
+            time.sleep(5)  # wait for a few seconds before restarting
+            p = start_ffmpeg()
+            continue
+        if stream_alerted:
+            result=send_notification(f'datetime: {datetime.now()},Reconnected. 重连成功')   
+            if result:
+                stream_alerted = False
         samples = np.frombuffer(data, dtype=np.int16)
         audio_data = samples.astype(np.float32) / 32768.0
         audio_data = audio_data.reshape(-1, 1)
