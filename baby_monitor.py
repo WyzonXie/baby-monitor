@@ -14,8 +14,10 @@ THRESHOLD = 0.1
 HEARTBEAT_INTERVAL = timedelta(hours=1)  # send heartbeat every hour
 CRY_COUNT_THRESHOLD = 5  # number of consecutive cries to trigger alert
 SILENCE_RESET_THRESHOLD = 10  # number of consecutive silences to reset cry count
+SPEECH_THRESHOLD = 0.5  # threshold for speech detection
 BYTES_PER_SAMPLE = 2  # 16-bit audio
 CHUNK_BYTES = SAMPLE_RATE * SECONDS * BYTES_PER_SAMPLE  # number of bytes to read per chunk
+
 
 cry_count = 0
 silence_count = 0
@@ -39,6 +41,7 @@ log_file=open("cry_log.csv", "a", encoding="utf-8")
 p = start_ffmpeg()
 try:
     while True:
+        speech_score = 0
         is_crying = False
         cry_score = 0
         top_category = ""
@@ -64,7 +67,6 @@ try:
         audio_data = samples.astype(np.float32) / 32768.0
         audio_data = audio_data.reshape(-1, 1)
         volume = abs(audio_data).max()
-        print(volume)
         # Check if the volume exceeds the threshold
         if volume > THRESHOLD:
             print("Sound detected!")
@@ -78,9 +80,14 @@ try:
                     cry_score = category.score
                     if cry_score > 0.5:
                         is_crying = True
-        
+                if category.category_name == "Speech":
+                    speech_score = category.score
         # Update cry and silence counts based on detection
-        if is_crying:
+        if speech_score > SPEECH_THRESHOLD:
+            cry_count = 0
+            silence_count = 0
+            alerted = False
+        elif is_crying:
             cry_count += 1
             silence_count = 0
             if cry_count >= CRY_COUNT_THRESHOLD and not alerted:
@@ -98,7 +105,9 @@ try:
             last_heartbeat_time = datetime.now()
             send_notification(f'datetime: {datetime.now()}, Heartbeat: Baby monitor is running. 宝宝监护运行中。')
 
-        log_file.write(f'{datetime.now()},{volume},{is_crying},{cry_score},"{top_category}",{top_score}\n')
+        print(volume,cry_count,speech_score)
+
+        log_file.write(f'{datetime.now()},{volume},{is_crying},{cry_score},"{top_category}",{top_score},{speech_score}\n')
         log_file.flush()
 
 except KeyboardInterrupt:
