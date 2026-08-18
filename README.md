@@ -1,286 +1,178 @@
-# baby-monitor
+# 宝宝哭声监护 · Baby Monitor
 
-  **English** | [中文](#中文说明)
+用一台普通网络摄像头，听出宝宝在哭，并把消息推到手机上。
 
-  An AI-powered baby monitor that pings you only when it matters.
+家里白天没人的时候，摄像头能看不能"管"——除非有人一直盯着屏幕。这个程序把"盯着"这件事自动化：持续听房间里的声音，判断是不是婴儿哭声，确认在哭就发一条微信到手机上。
 
-  Unlike ordinary camera apps that require you to keep watching a live stream,
-  this system watches for you and reaches out proactively — the alert fires only
-  when crying persists for 3 minutes **with no adult present in the frame**.
-  The rest of the time, it stays silent.
+---
 
-  ## Core Idea
+## 现在能做什么
 
-  Crying is not an anomaly. **Unattended crying is.**
+| 功能 | 状态 |
+| --- | --- |
+| 从网络摄像头（RTSP）实时取音频 | ✅ |
+| 两阶段识别：音量初筛 + 声音分类模型 | ✅ |
+| 持续哭满设定秒数才告警（防误报） | ✅ |
+| 告警去重，一次事件只发一条 | ✅ |
+| 每小时心跳消息，证明程序还活着 | ✅ |
+| 摄像头断线自动检测 + 无限重连 | ✅ |
+| 断线／恢复各推一条微信，发失败会重试 | ✅ |
+| 逐秒 CSV 日志，用于事后调参 | ✅ |
+| 参数外置到配置文件 | ⬜ 计划中 |
+| 自动化测试 | ⬜ 计划中 |
+| "哭满 3 分钟且全程没有大人说话"联合判断 | ⬜ 计划中 |
 
-  A baby crying for a minute while a caregiver is nearby is perfectly normal and
-  should never trigger an alert. This single design decision cuts false alarms by
-  an order of magnitude and shapes the entire architecture.
+---
 
-  ## How It Works
+## 工作原理
 
-  Two-tier cascade:
+```
+摄像头 ──RTSP──▶ ffmpeg ──裸 PCM──▶ Python
+                                      │
+                              每次取 1 秒音频
+                                      │
+                          ┌───────────┴───────────┐
+                          │  第一关：音量够大吗？   │  ← 便宜，几乎不耗 CPU
+                          └───────────┬───────────┘
+                                      │ 够大才往下走
+                          ┌───────────┴───────────┐
+                          │  第二关：YAMNet 分类   │  ← 贵，每秒跑一次会烫
+                          │  是不是 "婴儿哭声"？   │
+                          └───────────┬───────────┘
+                                      │
+                            连续哭满 N 秒 ──▶ 企业微信机器人 ──▶ 手机
+```
 
-  ```
-  Camera (RTSP) ──┐
-                  ├─→ Local screening (YAMNet audio + OpenCV vision, on a home PC)
-  Microphone ─────┘         │
-                            │  only suspicious moments (~1% of the time)
-                            ▼
-                     Claude API review
-                            │  confirmed events only
-                            ▼
-                WeCom bot push → parent's phone (alert + single snapshot)
-  ```
+**为什么分两关**：声音分类模型每秒都跑会明显吃 CPU，而一天里绝大多数时间房间是安静的。先用一个几乎不花钱的音量判断把安静的秒数挡掉，只有"有动静"的那几秒才交给模型。
 
-  - **Tier 1 (local):** filters out 99% of quiet time at zero cloud cost
-  - **Tier 2 (Claude API):** double-checks suspicious moments to suppress false alarms
-  - **Outbound-only networking:** no public IP, no port forwarding, no inbound
-    exposure of the home network
+**音量门槛只负责省 CPU，不负责判断哭没哭**——所以它宁可定低、放进来一些噪音，也不能定高、把真哭声挡在门外。这条原则是用实际日志验证过的：门槛定 0.2 时，夹在哭声中间那几秒音量只有 0.10~0.18，全被拦掉、模型根本没跑到。
 
-  ## Current Status
+---
 
-  Early development. Six planned stages, currently in stage 2.
+## 技术栈
 
-  | Stage | Scope | Status |
-  |---|---|---|
-  | 1 | Cry detection + WeCom push + heartbeat | Prototype done and tested; being
-  migrated into this repo under proper engineering practices |
-  | 2 | Camera access (RTSP), stream-loss recovery, adult detection | **In progress** —
-  stream verified at 2880×1620 @ 15fps |
-  | 3 | Infant posture (prone / face covered), bed-zone rules, snapshots | Planned |
-  | 4 | Claude API second-opinion review | Planned |
-  | 5 | One-week field tuning, target < 1 false alarm per night | Planned |
-  | 6 | Foreign-object detection on the bed | Planned |
+- **Python 3**
+- **ffmpeg** —— 负责连摄像头、解 RTSP、把音频转成程序能直接算的原始数字流
+- **MediaPipe Audio Classifier + YAMNet** —— Google 的通用声音分类模型，能识别 500 多类声音，其中包含 `Baby cry, infant cry`
+- **NumPy** —— 音频数据换算
+- **requests** —— 推送到企业微信群机器人
 
-  ## Quick Start
+---
 
-  ```bash
-  # 1. Clone
-  git clone https://github.com/WyzonXie/baby-monitor.git
-  cd baby-monitor
+## 快速开始
 
-  # 2. Create and activate a virtual environment (Windows)
-  py -m venv .venv
-  .venv\Scripts\activate
+### 1. 装 ffmpeg
 
-  # 3. Install dependencies
-  pip install -r requirements.txt
-  ```
+Windows：
 
-  **4. Create your own `config.py`.** It is deliberately absent from the repo —
-  it holds secrets (camera credentials) and is excluded via `.gitignore`, so
-  every user creates their own:
+```
+winget install ffmpeg
+```
 
-  ```python
-  # config.py
-  RTSP_URL = "rtsp://username:password@camera-ip/stream1"
-  ```
+装完**必须重开一个终端**，否则找不到命令（新装的程序不会出现在已经打开的终端里）。验证：
 
-  **5. Verify the camera connection:**
+```
+where ffmpeg
+```
 
-  ```bash
-  python check_camera.py
-  ```
+### 2. 装 Python 依赖
 
-  On success it prints the actual resolution and frame rate of the stream.
+```
+python -m venv .venv
+.venv\Scripts\activate
+pip install mediapipe numpy requests
+```
 
-  ## Tech Stack
+### 3. 下载模型文件
 
-  See [tech.md](./tech.md) for the full selection rationale, including the
-  options that were rejected and why.
+把 YAMNet 模型 `yamnet.tflite` 放到项目根目录（MediaPipe 官方模型页可下载）。
 
-  ## Privacy
+### 4. 建配置文件
 
-  - No continuous recording. Only the single frame at the moment an alert
-    triggers is saved.
-  - Exactly two kinds of data ever leave the home network: alert snapshots
-    (via WeCom) and suspicious-moment frames (sent to the Claude API for review).
+在项目根目录新建 `config.py`：
 
-  ## Known Limitations
+```python
+RTSP_URL = "rtsp://用户名:密码@摄像头IP/stream1"
+WEBHOOK_URL = "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=你的机器人key"
+```
 
-  - WeCom push cannot break through the phone's Do-Not-Disturb / silent mode.
-    The primary scenario is daytime, so this is accepted.
-  - A white-noise machine in the room may lower cry-detection scores; thresholds
-    will be tuned on-site in stage 5.
-  - Some infant-specific vision models used here are licensed for
-    **non-commercial use only**. This project is strictly for personal use;
-    any commercial use would require rebuilding the entire vision pipeline.
+> ⚠️ **这个文件里全是钥匙。** 摄像头的账号密码、能往你手机发消息的地址，都在里面。
+> 它已经被 `.gitignore` 挡住，**不要提交，不要贴到任何地方**。
+> 另外 ffmpeg 连接失败时会把完整地址（含密码）打到屏幕上——**贴报错之前先打码**。
 
-  ## License
+### 5. 跑起来
 
-  TBD (will be decided before the first functional release).
+```
+python baby_monitor.py
+```
 
-  ---
+终端会开始逐秒打印音量。`Ctrl+C` 停止。
 
-  # 中文说明
+---
 
-  AI 婴儿监护系统：只在真正要紧的时刻打扰你。
+## 可调参数
 
-  普通摄像头 App 需要你主动盯着直播画面看；本系统替你盯着，有事主动找你——
-  只有当哭声持续满 3 分钟、且画面里全程没有成人出现时，才会推送告警。
-  其余时间保持沉默。
+目前写在 `baby_monitor.py` 顶部（计划移到配置文件）：
 
-  ## 核心判断
+| 参数 | 默认值 | 含义 |
+| --- | --- | --- |
+| `THRESHOLD` | `0.1` | 音量初筛门槛，超过才跑模型 |
+| `CRY_COUNT_THRESHOLD` | `5` | 连续哭满几秒才告警 |
+| `SILENCE_RESET_THRESHOLD` | `10` | 连续安静几秒算这次哭停了 |
+| `HEARTBEAT_INTERVAL` | `1 小时` | 多久发一次"我还活着" |
+| `SAMPLE_RATE` | `16000` | 采样率，YAMNet 要求 16kHz |
 
-  哭不是异常，**哭了没人管才是异常。**
+实测每轮约 1.08 秒，不是整 1 秒，所以"5 次"实际约 5.4 秒。
 
-  看护人就在旁边时宝宝哭一分钟，是再正常不过的事，不应该触发任何告警。
-  这一条判断把误报率降低了一个数量级，也决定了整个系统的架构。
+---
 
-  ## 工作原理
+## 关键设计决策
 
-  两层级联：
+**1. 为什么用 ffmpeg 取音频，而不是直接用麦克风？**
+笔记本麦克风的底噪是 0.03~0.07，摄像头是 0.0003~0.02，**低一个量级**，哭声和安静的分离度好得多。而且摄像头本来就要装在房间里，麦克风方案还得多摆一台电脑。
 
-  ```
-  摄像头 (RTSP) ──┐
-                  ├─→ 本地筛查（YAMNet 听声 + OpenCV 看画面，跑在家用 PC 上）
-  麦克风 ─────────┘         │
-                            │  只放行可疑时刻（约 1% 的时间）
-                            ▼
-                      Claude API 复核
-                            │  只放行确认的事件
-                            ▼
-               企业微信机器人 → 家长手机（告警 + 单帧抓拍）
-  ```
+**2. 断线之后是报警退出，还是自动重连？——选自动重连。**
+主场景是白天大人上班。中午网抖一下就退出程序，等于剩下大半天完全失明，而且没人会在家里去重启它。所以重连循环**刻意没有出口**：摄像头永远不恢复就永远重试，唯一的退出方式是 `Ctrl+C`。
 
-  - **第一层（本地）**：挡掉 99% 的平静时间，云端成本为零
-  - **第二层（Claude API）**：对可疑时刻二次确认，压制误报
-  - **纯出站网络**：不需要公网 IP、不做端口映射，家庭网络零暴露面
+**3. 为什么给 ffmpeg 加了超时？**
+最早的断线检测只防住了"ffmpeg 进程死了"这一种情况。但真实的断线（摄像头断电、Wi-Fi 掉线、路由器重启）里，**ffmpeg 是活着的**，它在那儿等摄像头回话，管道不断只是不出数据——程序会静默卡死在读取那一行，不报错、不告警、看着像在跑其实早瞎了。
+加上 `-timeout` 之后，ffmpeg 等不到数据会自己退出，于是"卡住"变成了"断开"，**已有的断线检测不用改一行就生效了**。
 
-  ## 当前状态
+**4. 通知发失败了怎么办？**
+企业微信服务端会偶发抽风——连得上、请求发得出去，就是不回话。所以开关的语义必须是"**发成功才不再试**"，而不是"**试过就不再试**"。后者会导致最要紧的那条断线通知永久丢失，人在外面完全不知道监护已经停了。
 
-  早期开发中。整体规划六个阶段，目前在阶段 2。
+**5. 为什么按名字找 `Baby cry, infant cry`，而不是取模型给的第一名？**
+实测中模型的第一名长期是大类 `Crying, sobbing`（0.94~0.99），把细类压在下面。只看第一名会漏掉真正要的那个标签。
 
-  | 阶段 | 内容 | 状态 |
-  |---|---|---|
-  | 1 | 哭声检测 + 微信推送 + 心跳 | 原型已完成并通过测试，正按工程规范迁入本仓库 |
-  | 2 | 摄像头接入（RTSP）、断流重连、成人检测 | **进行中**——已实测取流 2880×1620 @
-  15fps |
-  | 3 | 婴儿姿态（俯卧/遮脸）、床区规则、抓拍 | 未开始 |
-  | 4 | Claude API 二次复核 | 未开始 |
-  | 5 | 一周实地调参，目标误报 < 1 次/晚 | 未开始 |
-  | 6 | 床面异物检测 | 未开始 |
+---
 
-  ## 快速开始
+## 已知限制
 
-  ```bash
-  # 1. 下载代码
-    (via WeCom) and suspicious-moment frames (sent to the Claude API for review).
+- **家里整体断网时告警发不出去**——而那恰恰是最需要告警的时刻之一。目前无解，属于设计上的固有盲区。
+- **白噪音机的影响未实测**。持续白噪音会整体抬高底噪，可能需要重新标定音量门槛。这是目前最大的漏报风险。
+- **没有自动化测试**，每次改动只能靠手动拔电源验证。
+- **参数写死在代码里**，调参需要改源码。
+- 只做了音频，摄像头的画面完全没用上。
 
-  ## Known Limitations
+---
 
-  - WeCom push cannot break through the phone's Do-Not-Disturb / silent mode.
-    The primary scenario is daytime, so this is accepted.
-  - A white-noise machine in the room may lower cry-detection scores; thresholds
-    will be tuned on-site in stage 5.
-  - Some infant-specific vision models used here are licensed for
-    **non-commercial use only**. This project is strictly for personal use;
-    any commercial use would require rebuilding the entire vision pipeline.
+## 项目结构
 
-  ## License
+```
+baby-monitor/
+├── baby_monitor.py    主程序
+├── notifier.py        企业微信推送（含超时兜底）
+├── config.py          密钥配置（不入库）
+├── rtsp_test.py       单独测收音，用于区分"收音坏了"还是"判断逻辑坏了"
+├── notify_test.py     单独测推送，同上
+├── yamnet.tflite      声音分类模型
+└── cry_log.csv        逐秒日志（不入库，含家庭实际声音）
+```
 
-  TBD (will be decided before the first functional release).
+`rtsp_test.py` 和 `notify_test.py` 不是残留的调试脚本，是**故意留下的**：出问题时单独跑一个，就能把故障范围一刀切成两半，不用在主程序里瞎猜。
 
-  ---
+---
 
-  # 中文说明
+## 隐私
 
-  AI 婴儿监护系统：只在真正要紧的时刻打扰你。
-
-  普通摄像头 App 需要你主动盯着直播画面看；本系统替你盯着，有事主动找你——
-  只有当哭声持续满 3 分钟、且画面里全程没有成人出现时，才会推送告警。
-  其余时间保持沉默。
-
-  ## 核心判断
-
-  哭不是异常，**哭了没人管才是异常。**
-
-  看护人就在旁边时宝宝哭一分钟，是再正常不过的事，不应该触发任何告警。
-  这一条判断把误报率降低了一个数量级，也决定了整个系统的架构。
-
-  ## 工作原理
-
-  两层级联：
-
-  ```
-  摄像头 (RTSP) ──┐
-                  ├─→ 本地筛查（YAMNet 听声 + OpenCV 看画面，跑在家用 PC 上）
-  麦克风 ─────────┘         │
-                            │  只放行可疑时刻（约 1% 的时间）
-                            ▼
-                      Claude API 复核
-                            │  只放行确认的事件
-                            ▼
-               企业微信机器人 → 家长手机（告警 + 单帧抓拍）
-  ```
-
-  - **第一层（本地）**：挡掉 99% 的平静时间，云端成本为零
-  - **第二层（Claude API）**：对可疑时刻二次确认，压制误报
-  - **纯出站网络**：不需要公网 IP、不做端口映射，家庭网络零暴露面
-
-  ## 当前状态
-
-  早期开发中。整体规划六个阶段，目前在阶段 2。
-
-  | 阶段 | 内容 | 状态 |
-  |---|---|---|
-  | 1 | 哭声检测 + 微信推送 + 心跳 | 原型已完成并通过测试，正按工程规范迁入本仓库 |
-  | 2 | 摄像头接入（RTSP）、断流重连、成人检测 | **进行中**——已实测取流 2880×1620 @
-  15fps |
-  | 3 | 婴儿姿态（俯卧/遮脸）、床区规则、抓拍 | 未开始 |
-  | 4 | Claude API 二次复核 | 未开始 |
-  | 5 | 一周实地调参，目标误报 < 1 次/晚 | 未开始 |
-  | 6 | 床面异物检测 | 未开始 |
-
-  ## 快速开始
-
-  ```bash
-  # 1. 下载代码
-  git clone https://github.com/WyzonXie/baby-monitor.git
-  cd baby-monitor
-
-  # 2. 创建并激活虚拟环境（Windows）
-  py -m venv .venv
-  .venv\Scripts\activate
-
-  # 3. 安装依赖
-  pip install -r requirements.txt
-  ```
-
-  **第 4 步，创建你自己的 `config.py`。** 仓库里故意没有这个文件——它存放
-  摄像头密码等敏感信息，被 `.gitignore` 排除在版本控制之外，每个使用者自建：
-
-  ```python
-  # config.py
-  RTSP_URL = "rtsp://用户名:密码@摄像头IP/stream1"
-  ```
-
-  **第 5 步，验证摄像头连通：**
-
-  ```bash
-  python check_camera.py
-  ```
-
-  成功时会打印视频流的实际分辨率与帧率。
-
-  ## 技术选型
-
-  完整的选型理由（包括否决了哪些方案、为什么）见 [tech.md](./tech.md)。
-
-  ## 隐私与数据
-
-  - 不做连续录像，只保存告警触发瞬间的单帧画面
-  - 会离开家庭网络的数据仅两类：告警抓拍（经企业微信）、可疑时刻画面
-    （送 Claude API 复核）
-
-  ## 已知限制
-
-  - 微信推送穿不透手机的勿扰/静音模式。主场景为白天，此限制已接受
-  - 房间白噪音机可能压低哭声识别分数，阈值需在阶段 5 实地调参
-  - 本项目使用的部分婴儿专用视觉模型为**非商用许可**，仅限个人自用；
-    任何商业化使用前，整条视觉链必须替换重做
-
-  ## 许可证
-
-  待定（首个正式功能版本发布前确定）。
+音频只在本机处理，不上传任何服务器。日志（`cry_log.csv`）和录音测试文件含家庭真实声音，已全部排除在版本库之外。推送内容不含音频，只有时间和状态文字。
