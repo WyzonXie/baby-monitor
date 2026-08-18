@@ -4,17 +4,13 @@ from mediapipe.tasks.python import audio as mp_audio
 from mediapipe.tasks.python.components import containers as mp_containers
 from notifier import send_notification
 from config import RTSP_URL
+from settings import THRESHOLD, HEARTBEAT_INTERVAL, CRY_COUNT_THRESHOLD, SPEECH_THRESHOLD, SILENCE_RESET_THRESHOLD
 import numpy as np
 import subprocess
 import time
 
 SAMPLE_RATE = 16000
 SECONDS = 1
-THRESHOLD = 0.1
-HEARTBEAT_INTERVAL = timedelta(hours=1)  # send heartbeat every hour
-CRY_COUNT_THRESHOLD = 5  # number of consecutive cries to trigger alert
-SILENCE_RESET_THRESHOLD = 10  # number of consecutive silences to reset cry count
-SPEECH_THRESHOLD = 0.5  # threshold for speech detection
 BYTES_PER_SAMPLE = 2  # 16-bit audio
 CHUNK_BYTES = SAMPLE_RATE * SECONDS * BYTES_PER_SAMPLE  # number of bytes to read per chunk
 
