@@ -83,7 +83,7 @@ where ffmpeg
 ```
 python -m venv .venv
 .venv\Scripts\activate
-pip install mediapipe numpy requests
+pip install -r requirements.txt
 ```
 
 ### 3. 下载模型文件
@@ -92,7 +92,7 @@ pip install mediapipe numpy requests
 
 ### 4. 建配置文件
 
-在项目根目录新建 `config.py`：
+复制仓库里的样板 `config.py.example`，改名为 `config.py`，填进自己的地址：
 
 ```python
 RTSP_URL = "rtsp://用户名:密码@摄像头IP/stream1"
@@ -180,6 +180,8 @@ baby-monitor/
 ├── baby_monitor.py    主程序
 ├── notifier.py        企业微信推送（含超时兜底）
 ├── config.py          密钥配置（不入库）
+├── config.py.example  配置样板（入库，不含真实密钥）
+├── requirements.txt   Python 依赖清单
 ├── rtsp_test.py       单独测收音，用于区分"收音坏了"还是"判断逻辑坏了"
 ├── notify_test.py     单独测推送，同上
 ├── yamnet.tflite      声音分类模型
